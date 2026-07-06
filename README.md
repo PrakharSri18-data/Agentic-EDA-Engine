@@ -1,56 +1,158 @@
-# 🤖 Agentic EDA Engine
+# 🤖 Self-Correcting Data Analyst (Agentic EDA)
 
-**A self-correcting, LLM-powered Exploratory Data Analysis agent that writes, executes, and debugs its own Python code — so you don't have to.**
+[![CI](https://github.com/prakhar-189/Agentic-Data-Analyst-Assistant/actions/workflows/ci.yml/badge.svg)](https://github.com/prakhar-189/Agentic-Data-Analyst-Assistant/actions/workflows/ci.yml)
+
+**Ask a dataset a question in plain English — the agent answers with runnable Python, a SQL query, or an Excel formula, and rewrites its own code when it errors, until it works.**
+
+Built as a stateful [LangGraph](https://github.com/langchain-ai/langgraph) workflow with a **local** LLM ([Qwen2.5-Coder:7b](https://ollama.com/library/qwen2.5-coder) via Ollama) and a [Streamlit](https://streamlit.io/) chat UI. No data leaves your machine.
+
+### Three answer modes
+| Mode | What it does | Executed & self-correcting? |
+|---|---|---|
+| 🐍 **Python** | Writes & runs pandas/matplotlib analysis, returns results + charts | ✅ yes (isolated subprocess) |
+| 🗃️ **SQL** | Writes a query, runs it against your data via an in-memory SQLite table | ✅ yes (real query results) |
+| 📊 **Excel** | Writes an Excel formula for you to paste into a sheet | ❌ generate-only (formulas can't be executed in Python) |
+
+The Python and SQL modes both flow through the same **Generate → Execute → Reflect** loop — a bad column name or an unquoted `"Order ID"` in SQL errors, and the agent fixes it. Excel is generate-only and honestly labeled as such.
+
+![App interface](docs/app_homepage.png)
 
 ---
 
-## Overview
+## 📊 Does the self-correction actually help? (measured)
 
-Agentic EDA Engine is an AI-driven data analysis assistant that lets you explore datasets using plain English. Instead of writing pandas or matplotlib code yourself, you simply upload a file, ask a question, and the agent takes care of the rest — autonomously generating, running, and fixing code until it gets the right answer.
+The whole premise is the **Generate → Execute → Reflect** loop, so I built a benchmark ([`evaluation/benchmark.py`](evaluation/benchmark.py)) to measure whether it does anything. It runs 16 natural-language questions across the two sample datasets and records, per task, whether the **first** generated program ran, whether the **final** program ran (i.e. after self-correction), and how many attempts it took.
 
-Under the hood, the system is built as a **stateful agentic workflow** using [LangGraph](https://github.com/langchain-ai/langgraph), with a local LLM ([Qwen2.5-Coder:7b](https://ollama.com/library/qwen2.5-coder) via Ollama) for code generation. A [Streamlit](https://streamlit.io/) front-end provides a clean, chat-based interface for interacting with your data.
+| Task set | Tasks | First-try success | **Final success (after self-correction)** |
+|---|---|---|---|
+| Easy (well-specified) | 10 | 100% | 100% |
+| Hard (pandas-3.0 gotchas) | 6 | 33% | **83%** |
+| **Overall** | **16** | **75%** | **94%** |
+
+**Self-correction lifted end-to-end success from 75% → 94%.** On the harder tasks — phrasings whose obvious solution trips a real pandas-3.0 change (naive `df.corr()` and `df.groupby(...).mean()` now *raise* on mixed-type frames, where pandas 2.x silently dropped non-numeric columns) — the model failed on the first try 4 times and **fixed 3 of them by itself** on the retry. One task it could not fix within 3 attempts and gave up gracefully.
+
+> **What "success" means here:** *the generated code executed without error* — the loop's own success criterion. It does **not** verify the answer is semantically correct (that needs human grading). So these numbers measure executable-code rate and, crucially, the self-correction **rescue rate**, not analytical correctness. Full per-task results: [`evaluation/benchmark_results.json`](evaluation/benchmark_results.json).
+
+A concrete rescue: asked for a correlation heatmap, the model first wrote `df.corr()` → `ValueError: could not convert string to float` → the reflect step read the traceback and rewrote it with `numeric_only=True` → success on attempt 2.
 
 ---
 
 ## How It Works
 
-The agent follows a **Generate → Execute → Reflect** loop:
+```
+                ┌─────────────┐
+   question ───▶│  GENERATE   │  LLM writes Python from the request + schema
+                └──────┬──────┘
+                       ▼
+                ┌─────────────┐   success ──▶ return output + charts
+                │  EXECUTE    │──────────────────────────────────────▶
+                └──────┬──────┘
+                       │ error (traceback)
+                       ▼
+                ┌─────────────┐
+                │  REFLECT    │  LLM reads the error and rewrites the code
+                └──────┬──────┘
+                       └───▶ back to EXECUTE  (up to 3 attempts, then stop)
+```
 
-1. **Generate**: The LLM receives your natural language query and the dataset's schema (columns, data types, sample rows) and generates Python analysis code.
-2. **Execute**: The generated code is run in a sandboxed environment. If it succeeds, the output (text results or charts) is returned to you.
-3. **Reflect**: If the code throws an error, the agent analyzes the error message and rewrites the code to fix it. This loop continues for up to 3 iterations before gracefully stopping to prevent infinite loops.
-4. **Clarify**: If your query is ambiguous, the agent pauses and asks you for clarification instead of guessing.
+If the request references columns that aren't in the schema, the agent instead returns a `CLARIFICATION_NEEDED` question rather than hallucinating.
 
-This self-correcting loop means the agent can recover from common mistakes — wrong column names, incorrect data types, missing imports — without any intervention from you.
+---
+
+## 🔒 A note on the code sandbox (honest version)
+
+The agent runs LLM-generated code, so isolation matters. Generated code executes in an **isolated subprocess** with:
+
+- a **hard timeout** (kills runaway / infinite-loop code — the old version ran a bare `exec()` in-process with no timeout, so a single `while True:` would hang the whole app),
+- a **throwaway temp working directory** (the dataset is copied in, charts are collected out as bytes; the code can't see or clobber the repo or other runs),
+- a keyword **denylist** as cheap defense-in-depth (now also blocking `__import__`, which trivially bypassed the old `import os` check).
+
+**This is a real improvement, but it is not a true security sandbox.** The subprocess still runs with your OS permissions, so a determined payload could touch the filesystem via an absolute path. Genuine isolation would need a container / gVisor / firejail. This is fine for a local, single-user tool with a non-adversarial local model — and it's stated honestly rather than sold as "safe."
+
+---
+
+## 🐛 What was fixed in this rebuild
+
+- **No execution isolation or timeout** → subprocess + timeout + temp-dir isolation (above).
+- **Stale/wrong chart bug**: the UI scanned a shared `output/` folder and displayed an arbitrary PNG (`png_files[0]`), leaking charts across runs and showing only one. Charts now flow back through agent state as in-memory bytes; every chart from a run is shown, nothing leaks.
+- **No evaluation**: the core feature was unmeasured. Added the benchmark above.
+- **Broken README clone command**: it referenced a repo name (`Agentic-EDA-Engine`) that doesn't exist. Fixed to the real repo.
+- **Uploaded file dumped in the repo root** and never cleaned up → written to a temp path instead.
+- **72-line `pip freeze`** `requirements.txt` (full of Streamlit's transitive deps) → 8 direct dependencies.
+- **No tests / CI** → pytest suite (executor sandbox, security block, timeout, and graph routing) + GitHub Actions. Tests need **no** running Ollama.
 
 ---
 
 ## Features
 
-- 🗣️ **Natural language querying** — ask questions like *"What is the average revenue by region?"* or *"Plot monthly sales trends"*
-- 🔁 **Self-correcting execution** — automatically rewrites and retries code on failure (up to 3 times)
-- 📊 **Chart generation** — produces and displays matplotlib/seaborn plots directly in the UI
-- 🗂️ **Schema-aware generation** — uses extracted column names, data types, and sample rows to write accurate, context-aware code
-- 📁 **CSV & Excel support** — works with both `.csv` and `.xlsx` file formats
-- 🔒 **Fully local** — runs entirely on your machine via Ollama; no data is sent to external APIs
-- 🧾 **Transparent outputs** — view the final executed code and the number of correction iterations in an expandable panel
+- 🗣️ Natural-language querying over `.csv` / `.xlsx`
+- 🔁 Self-correcting execution (measured above)
+- 📊 Chart generation (matplotlib / seaborn), shown inline
+- 🗂️ Schema-aware prompting (column names, dtypes, sample rows)
+- 🔒 Fully local via Ollama — no external API calls
+- 🧾 Transparent: view the final executed code and correction count
 
 ---
 
 ## Project Structure
 
 ```
-Agentic-EDA-Engine/
-│
-├── main.py              # Core agentic workflow (LangGraph state graph)
-├── streamlit_app.py     # Streamlit UI — file upload, chat interface, result display
-├── prompts.py           # Prompt templates for code generation and error reflection
-├── tools.py             # Safe Python code execution utility
-├── requirements.txt     # Python dependencies
-├── Sample Datasets/     # Example datasets to try out
-├── output/              # Temporary folder for generated chart images
-└── sample_generated.ipynb  # Example notebook showing generated outputs
+Agentic-Data-Analyst-Assistant/
+├── main.py                # LangGraph state graph (generate / execute / reflect)
+├── streamlit_app.py       # Chat UI
+├── prompts.py             # Generator + reflection prompt templates
+├── tools.py               # Isolated subprocess executor (timeout + temp dir)
+├── evaluation/
+│   └── benchmark.py       # Self-correction benchmark (resumable, checkpointed)
+├── tests/                 # pytest: executor sandbox + graph routing
+├── Sample Datasets/       # Example CSV / XLSX to try
+├── requirements.txt
+└── .github/workflows/ci.yml
 ```
+
+---
+
+## Getting Started
+
+### Prerequisites
+- Python 3.9+
+- [Ollama](https://ollama.com/) running locally with the model pulled:
+  ```bash
+  ollama pull qwen2.5-coder:7b
+  ```
+
+### Install & Run
+```bash
+git clone https://github.com/prakhar-189/Agentic-Data-Analyst-Assistant.git
+cd Agentic-Data-Analyst-Assistant
+
+python -m venv venv
+venv\Scripts\activate            # source venv/bin/activate on Linux/Mac
+pip install -r requirements.txt
+
+streamlit run streamlit_app.py
+```
+
+### Run the benchmark
+```bash
+python -m evaluation.benchmark    # needs Ollama running; resumable + checkpointed
+```
+
+### Tests
+```bash
+pip install -r requirements-dev.txt
+pytest tests/ -v      # no Ollama needed
+ruff check .
+```
+
+---
+
+## Example: generated code + result
+
+The agent generates and runs code like this, then shows the chart:
+
+![Generated code](docs/demo_generated_code.png)
+![Resulting chart](docs/demo_result_chart.png)
 
 ---
 
@@ -58,83 +160,31 @@ Agentic-EDA-Engine/
 
 | Component | Technology |
 |---|---|
-| Agentic Workflow | LangGraph |
-| LLM | Qwen2.5-Coder:7b via Ollama (local) |
-| LLM Interface | LangChain Ollama |
+| Agentic workflow | LangGraph |
+| LLM (local) | Qwen2.5-Coder:7b via Ollama |
+| LLM interface | langchain-ollama |
 | UI | Streamlit |
-| Data Handling | Pandas |
-| Visualization | Matplotlib / Seaborn |
+| Data / viz | pandas, matplotlib, seaborn |
+| Testing / CI | pytest, ruff, GitHub Actions |
 
 ---
 
-## Getting Started
+## Limitations & next steps
 
-### Prerequisites
-
-- Python 3.9+
-- [Ollama](https://ollama.com/) installed and running locally
-- Qwen2.5-Coder model pulled: `ollama pull qwen2.5-coder:7b`
-
-### Installation
-
-```bash
-git clone https://github.com/prakhar-189/Agentic-EDA-Engine.git
-cd Agentic-EDA-Engine
-pip install -r requirements.txt
-```
-
-### Run the App
-
-```bash
-streamlit run streamlit_app.py
-```
-
-Then open `http://localhost:8501` in your browser.
-
----
-
-## Usage
-
-1. Launch the Streamlit app.
-2. Upload a `.csv` or `.xlsx` dataset using the file uploader.
-3. Review the automatically extracted schema in the expandable panel.
-4. Type your analysis question in the chat input (e.g., *"Show me the top 5 products by total sales"*).
-5. The agent will generate, execute, and if necessary, self-correct Python code to answer your question.
-6. View the result, any generated charts, the final code, and the number of correction loops it took.
-
----
-
-## Example Queries
-
-- `"What is the distribution of customer ages?"` → Generates a histogram
-- `"Which city had the highest total revenue last year?"` → Returns a ranked summary
-- `"Plot the correlation between price and quantity sold"` → Generates a scatter plot
-- `"Are there any missing values in the dataset?"` → Returns a missing-value report
-
----
-
-## Limitations
-
-- The agent uses a local LLM, so performance depends on your hardware (GPU recommended for Qwen2.5-Coder:7b).
-- Complex, multi-step analyses may occasionally require rephrasing the query for best results.
-- The maximum self-correction attempts are capped at 3 iterations to prevent runaway loops.
+- **Not a security sandbox** (see above) — a container would be the real fix.
+- **"Success" = code runs**, not answer-is-correct; a semantic-correctness eval (checking outputs against ground truth) is the natural next step.
+- **Local-model dependent**: quality and speed track your hardware and the Qwen model.
+- The 3-attempt correction cap is a deliberate guard against runaway loops.
 
 ---
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE) © 2026 Prakhar Srivastava
-
----
-
-## Acknowledgements
-
-Built with [LangGraph](https://github.com/langchain-ai/langgraph), [LangChain](https://github.com/langchain-ai/langchain), [Ollama](https://ollama.com/), and [Streamlit](https://streamlit.io/).
+MIT © Prakhar Srivastava
 
 ---
 
 ## Author
 
-Prakhar Srivastava
-
-Data Analyst, Data Scientist & AI Engineer | Dashboards, SQL, Machine Learning, Deep Learning, Generative AI, Prompt Engineering & Agentic AI
+**Prakhar Srivastava** — [github.com/prakhar-189](https://github.com/prakhar-189)
+Data Analyst · Data Scientist · AI Engineer
