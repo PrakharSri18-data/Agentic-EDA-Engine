@@ -1,0 +1,146 @@
+{
+  "overall": {
+    "n": 16,
+    "first_try_success": 12,
+    "rescued_by_self_correction": 3,
+    "final_success": 15,
+    "failed": 1,
+    "clarification": 0,
+    "first_try_success_rate": 0.75,
+    "final_success_rate": 0.938
+  },
+  "easy": {
+    "n": 10,
+    "first_try_success": 10,
+    "rescued_by_self_correction": 0,
+    "final_success": 10,
+    "failed": 0,
+    "clarification": 0,
+    "first_try_success_rate": 1.0,
+    "final_success_rate": 1.0
+  },
+  "hard": {
+    "n": 6,
+    "first_try_success": 2,
+    "rescued_by_self_correction": 3,
+    "final_success": 5,
+    "failed": 1,
+    "clarification": 0,
+    "first_try_success_rate": 0.333,
+    "final_success_rate": 0.833
+  },
+  "results": [
+    {
+      "question": "What is the average math_score for each gender?",
+      "dataset": "Student Dataset.csv",
+      "difficulty": "easy",
+      "outcome": "first_try",
+      "iterations": 1
+    },
+    {
+      "question": "How many students are in the dataset?",
+      "dataset": "Student Dataset.csv",
+      "difficulty": "easy",
+      "outcome": "first_try",
+      "iterations": 1
+    },
+    {
+      "question": "What is the correlation between reading_score and writing_score?",
+      "dataset": "Student Dataset.csv",
+      "difficulty": "easy",
+      "outcome": "first_try",
+      "iterations": 1
+    },
+    {
+      "question": "Plot the distribution of math_score as a histogram.",
+      "dataset": "Student Dataset.csv",
+      "difficulty": "easy",
+      "outcome": "first_try",
+      "iterations": 1
+    },
+    {
+      "question": "Which parental_level_of_education has the highest average writing_score?",
+      "dataset": "Student Dataset.csv",
+      "difficulty": "easy",
+      "outcome": "first_try",
+      "iterations": 1
+    },
+    {
+      "question": "What percentage of students completed the test_preparation_course?",
+      "dataset": "Student Dataset.csv",
+      "difficulty": "easy",
+      "outcome": "first_try",
+      "iterations": 1
+    },
+    {
+      "question": "What is the total Sales for each Product Category?",
+      "dataset": "E-Commerce dataset.xlsx",
+      "difficulty": "easy",
+      "outcome": "first_try",
+      "iterations": 1
+    },
+    {
+      "question": "Which Region has the highest total Profit?",
+      "dataset": "E-Commerce dataset.xlsx",
+      "difficulty": "easy",
+      "outcome": "first_try",
+      "iterations": 1
+    },
+    {
+      "question": "Plot total Sales by Month as a bar chart.",
+      "dataset": "E-Commerce dataset.xlsx",
+      "difficulty": "easy",
+      "outcome": "first_try",
+      "iterations": 1
+    },
+    {
+      "question": "What is the average Discount for each Segment?",
+      "dataset": "E-Commerce dataset.xlsx",
+      "difficulty": "easy",
+      "outcome": "first_try",
+      "iterations": 1
+    },
+    {
+      "question": "Show a correlation heatmap of the dataset.",
+      "dataset": "Student Dataset.csv",
+      "difficulty": "hard",
+      "outcome": "rescued_by_correction",
+      "iterations": 2
+    },
+    {
+      "question": "For each gender, compute the mean of every column in the dataset.",
+      "dataset": "Student Dataset.csv",
+      "difficulty": "hard",
+      "outcome": "failed",
+      "iterations": 3
+    },
+    {
+      "question": "Create a correlation heatmap of all columns in the dataset.",
+      "dataset": "E-Commerce dataset.xlsx",
+      "difficulty": "hard",
+      "outcome": "rescued_by_correction",
+      "iterations": 2
+    },
+    {
+      "question": "For each Region, show the average of every column.",
+      "dataset": "E-Commerce dataset.xlsx",
+      "difficulty": "hard",
+      "outcome": "rescued_by_correction",
+      "iterations": 2
+    },
+    {
+      "question": "What is the average number of days between Order Date and Ship Date, per Ship Mode?",
+      "dataset": "E-Commerce dataset.xlsx",
+      "difficulty": "hard",
+      "outcome": "first_try",
+      "iterations": 1
+    },
+    {
+      "question": "Plot a pie chart of total Sales share by Segment with percentage labels.",
+      "dataset": "E-Commerce dataset.xlsx",
+      "difficulty": "hard",
+      "outcome": "first_try",
+      "iterations": 1
+    }
+  ]
+}
